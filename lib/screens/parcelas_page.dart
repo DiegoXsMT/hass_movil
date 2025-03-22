@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:camera/camera.dart';
+import 'dart:io';
+import 'agregar_arbol_form.dart'; // Importa la nueva vista
 
 class ParcelasPage extends StatefulWidget {
   @override
@@ -70,16 +73,83 @@ class _ParcelasPageState extends State<ParcelasPage> {
     }
   }
 
+  Future<void> _openCamera() async {
+    final cameras = await availableCameras();
+    final firstCamera = cameras.first;
+
+    final image = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CameraScreen(camera: firstCamera),
+      ),
+    );
+
+    if (image != null) {
+      // Aquí puedes manejar la imagen capturada (por ejemplo, enviarla a la API)
+      print('Imagen capturada: ${image.path}');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imagen capturada: ${image.path}')),
+      );
+
+      // Enviar la imagen a la API
+      await _uploadImage(image);
+    }
+  }
+
+  Future<void> _uploadImage(XFile image) async {
+    if (authToken == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Usuario no autenticado')),
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    try {
+      final url = Uri.parse('https://hassclass.me/api/upload'); // Reemplaza con tu URL
+      final request = http.MultipartRequest('POST', url);
+
+      // Adjunta el archivo de la imagen
+      final file = await http.MultipartFile.fromPath('image', image.path);
+      request.files.add(file);
+
+      // Agrega el token de autenticación en los headers
+      request.headers['Authorization'] = 'Bearer $authToken';
+      request.headers['Accept'] = 'application/json';
+
+      // Envía la solicitud
+      final response = await request.send();
+
+      // Verifica el código de respuesta
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imagen subida exitosamente')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al subir la imagen: ${response.statusCode}')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al conectar con el servidor: $e')),
+      );
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.green[50],
       appBar: PreferredSize(
-        preferredSize: Size.fromHeight(80), // ✅ Más grande y atractivo
+        preferredSize: Size.fromHeight(80),
         child: AppBar(
-          automaticallyImplyLeading: false, // ✅ Evita que agregue la flecha de regreso
+          automaticallyImplyLeading: false,
           backgroundColor: Colors.green[700],
-          elevation: 5, // ✅ Sombra para mejor diseño
+          elevation: 5,
           flexibleSpace: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -92,21 +162,25 @@ class _ParcelasPageState extends State<ParcelasPage> {
           title: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.nature_people, color: Colors.white, size: 30), // ✅ Icono más visual
+              Icon(Icons.nature_people, color: Colors.white, size: 30),
               SizedBox(width: 10),
               Text(
                 'Parcelas',
                 style: TextStyle(
-                  fontSize: 24, // ✅ Más grande
+                  fontSize: 24,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
-                  letterSpacing: 1.2, // ✅ Espaciado para mejor legibilidad
+                  letterSpacing: 1.2,
                 ),
               ),
             ],
           ),
           centerTitle: true,
           actions: [
+            IconButton(
+              icon: Icon(Icons.camera_alt, color: Colors.white), // Botón de cámara
+              onPressed: _openCamera, // Método para abrir la cámara
+            ),
             IconButton(
               icon: Icon(Icons.refresh, color: Colors.white),
               onPressed: fetchParcelas,
@@ -197,6 +271,19 @@ class _ParcelasPageState extends State<ParcelasPage> {
                         ),
                       ],
                     ),
+                    SizedBox(height: 10),
+                    ElevatedButton(
+                      onPressed: () {
+                        // Navegar a la vista de agregar árbol con un ID estático (1)
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => AgregarArbolForm(idParcela: 1), // ID estático
+                          ),
+                        );
+                      },
+                      child: Text('Agregar Árbol'),
+                    ),
                   ],
                 ),
               ),
@@ -205,5 +292,66 @@ class _ParcelasPageState extends State<ParcelasPage> {
         ),
       ),
     );
+  }
+}
+
+class CameraScreen extends StatefulWidget {
+  final CameraDescription camera;
+
+  CameraScreen({required this.camera});
+
+  @override
+  _CameraScreenState createState() => _CameraScreenState();
+}
+
+class _CameraScreenState extends State<CameraScreen> {
+  late CameraController _controller;
+  late Future<void> _initializeControllerFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = CameraController(
+      widget.camera,
+      ResolutionPreset.medium,
+    );
+    _initializeControllerFuture = _controller.initialize();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Tomar foto')),
+      body: FutureBuilder<void>(
+        future: _initializeControllerFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.done) {
+            return CameraPreview(_controller);
+          } else {
+            return Center(child: CircularProgressIndicator());
+          }
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _takePicture,
+        child: Icon(Icons.camera),
+      ),
+    );
+  }
+
+  Future<void> _takePicture() async {
+    try {
+      await _initializeControllerFuture;
+      final image = await _controller.takePicture();
+      Navigator.pop(context, image); // Retorna la imagen capturada
+    } catch (e) {
+      print("Error al tomar la foto: $e");
+    }
   }
 }
